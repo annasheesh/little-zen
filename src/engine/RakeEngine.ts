@@ -34,6 +34,7 @@ export class RakeEngine implements InputHandler {
   private activeSource: InputSource | null = null;
   private startPoint: Point | null = null;
   private lastPoint: Point | null = null;
+  private smoothedNormal: { nx: number; ny: number } | null = null;
 
   // Stone interaction
   private selectedStoneId: string | null = null;
@@ -150,6 +151,7 @@ export class RakeEngine implements InputHandler {
     this.activeSource = e.source;
     this.startPoint = { x: e.x, y: e.y, time: e.timestamp ?? performance.now() };
     this.lastPoint = { ...this.startPoint };
+    this.smoothedNormal = null;
 
     // Stone tool handling
     if (this.currentTool === 'stone') {
@@ -294,6 +296,31 @@ export class RakeEngine implements InputHandler {
       case 'rake': {
         if (this.activeElement && this.activeElement.type === 'freehand') {
           if (dist > 0.002) {
+            const aspect = this.heightfield.getAspectRatio();
+            const rawDx = (e.x - this.lastPoint.x) * aspect;
+            const rawDy = e.y - this.lastPoint.y;
+            const rawLen = Math.hypot(rawDx, rawDy);
+
+            if (rawLen > 1e-6) {
+              const rawNx = (-rawDy / rawLen) / aspect;
+              const rawNy = rawDx / rawLen;
+
+              if (!this.smoothedNormal) {
+                this.smoothedNormal = { nx: rawNx, ny: rawNy };
+              } else {
+                // Smooth rake heading to prevent hand tremor / pixel quantization normal wobble
+                const blend = 0.35;
+                let nx = this.smoothedNormal.nx * (1 - blend) + rawNx * blend;
+                let ny = this.smoothedNormal.ny * (1 - blend) + rawNy * blend;
+                const isoLen = Math.hypot(nx * aspect, ny);
+                if (isoLen > 1e-6) {
+                  nx = (nx * aspect / isoLen) / aspect;
+                  ny = ny / isoLen;
+                }
+                this.smoothedNormal = { nx, ny };
+              }
+            }
+
             // Adaptive sub-stepping for fast movements ensures continuous sweeping without gaps
             const maxSubStep = 0.008;
             const subSteps = Math.min(6, Math.max(1, Math.ceil(dist / maxSubStep)));
@@ -313,7 +340,8 @@ export class RakeEngine implements InputHandler {
                 this.activeElement.prongOffsets,
                 this.activeElement.grooveWidth,
                 this.activeElement.depth,
-                this.stones
+                this.stones,
+                this.smoothedNormal ?? undefined
               );
             }
             this.heightfield.applySettling(1, true);
@@ -595,7 +623,6 @@ export class RakeEngine implements InputHandler {
   public clearGarden() {
     this.elements = [];
     this.heightfield.reset();
-    this.heightfield.addStoneContactBerms(this.stones);
     this.saveHistory();
     this.notifyChange();
   }

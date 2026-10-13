@@ -168,7 +168,8 @@ export class SandHeightfield {
     prongOffsets: number[],
     grooveWidth: number,
     depth: number,
-    stones?: GardenStone[]
+    stones?: GardenStone[],
+    normalOverride?: { nx: number; ny: number }
   ): void {
     const aspect = this.aspectRatio;
     const dxIso = (p1.x - p0.x) * aspect;
@@ -177,7 +178,10 @@ export class SandHeightfield {
 
     let nxNorm = 0;
     let nyNorm = 1;
-    if (lenIso > 1e-6) {
+    if (normalOverride) {
+      nxNorm = normalOverride.nx;
+      nyNorm = normalOverride.ny;
+    } else if (lenIso > 1e-6) {
       // Isotropic unit normal scaled back to normalized coordinates
       nxNorm = (-dyIso / lenIso) / aspect;
       nyNorm = dxIso / lenIso;
@@ -246,7 +250,8 @@ export class SandHeightfield {
       for (let gx = gx0; gx <= gx1; gx++) {
         const xNorm = gx * invW;
 
-        if (stones && this.isInsideAnyStone(xNorm, yNorm, stones, 0.005)) {
+        const stoneFactor = stones ? this.getStoneProximityFactor(xNorm, yNorm, stones) : 1.0;
+        if (stoneFactor <= 0.0) {
           continue;
         }
 
@@ -299,24 +304,20 @@ export class SandHeightfield {
         if (inAnyTrough) {
           // Inside trough: the tine cuts physically down through the sand.
           // Crossing strokes naturally slice through previous berms.
-          if (curH > bestTroughH) {
-            heights[idx] = bestTroughH;
+          const effTroughH = bestTroughH * stoneFactor;
+          if (curH > effTroughH) {
+            heights[idx] = effTroughH;
           } else {
-            heights[idx] = Math.min(curH, bestTroughH);
+            heights[idx] = Math.min(curH, effTroughH);
           }
         } else if (totalBermDelta > 0) {
           // Inside lateral berm / merged crest between tines:
-          // Target elevation determined by displacement geometry
-          const targetBerm = Math.min(maxBerm, totalBermDelta);
+          // Target elevation determined cleanly by displacement geometry
+          const targetBerm = Math.min(maxBerm, totalBermDelta * stoneFactor);
 
           if (curH < targetBerm) {
-            // Sand pushed upward to ridge height
+            // Sand pushed upward to clean ridge height
             heights[idx] = targetBerm;
-          } else {
-            // Already at or above target berm: prevent multi-step runaway accumulation
-            // Only allows natural compaction
-            const compaction = targetBerm * 0.05;
-            heights[idx] = Math.min(maxBerm, Math.max(curH, curH + compaction * (1 - curH / maxBerm)));
           }
         }
       }
@@ -341,20 +342,38 @@ export class SandHeightfield {
   }
 
   /**
-   * Carves a complete FreehandStroke with smooth spline densification
+   * Carves a complete FreehandStroke with smooth sub-stepping densification
    */
   public carveFreehandStroke(stroke: FreehandStroke, stones?: GardenStone[]): void {
     if (stroke.points.length < 2) return;
 
+    const maxSubStep = 0.008;
     for (let i = 0; i < stroke.points.length - 1; i++) {
-      this.carveRakeSegment(
-        stroke.points[i],
-        stroke.points[i + 1],
-        stroke.prongOffsets,
-        stroke.grooveWidth,
-        stroke.depth,
-        stones
-      );
+      const p0 = stroke.points[i];
+      const p1 = stroke.points[i + 1];
+      const d = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      const subSteps = Math.max(1, Math.ceil(d / maxSubStep));
+
+      for (let s = 1; s <= subSteps; s++) {
+        const t0 = (s - 1) / subSteps;
+        const t1 = s / subSteps;
+        const subP0 = {
+          x: p0.x + (p1.x - p0.x) * t0,
+          y: p0.y + (p1.y - p0.y) * t0
+        };
+        const subP1 = {
+          x: p0.x + (p1.x - p0.x) * t1,
+          y: p0.y + (p1.y - p0.y) * t1
+        };
+        this.carveRakeSegment(
+          subP0,
+          subP1,
+          stroke.prongOffsets,
+          stroke.grooveWidth,
+          stroke.depth,
+          stones
+        );
+      }
     }
 
     this.applySettling(2, true);
@@ -401,7 +420,8 @@ export class SandHeightfield {
       for (let gx = gx0; gx <= gx1; gx++) {
         const xNorm = gx * invW;
 
-        if (stones && this.isInsideAnyStone(xNorm, yNorm, stones, 0.005)) {
+        const stoneFactor = stones ? this.getStoneProximityFactor(xNorm, yNorm, stones) : 1.0;
+        if (stoneFactor <= 0.0) {
           continue;
         }
 
@@ -437,9 +457,10 @@ export class SandHeightfield {
         const curH = heights[idx];
 
         if (inTrough) {
-          heights[idx] = curH > bestTroughH ? bestTroughH : Math.min(curH, bestTroughH);
+          const effTroughH = bestTroughH * stoneFactor;
+          heights[idx] = curH > effTroughH ? effTroughH : Math.min(curH, effTroughH);
         } else if (totalRingBerm > 0) {
-          const targetBerm = Math.min(maxBerm, totalRingBerm);
+          const targetBerm = Math.min(maxBerm, totalRingBerm * stoneFactor);
           heights[idx] = curH < targetBerm ? targetBerm : curH;
         }
       }
@@ -671,8 +692,8 @@ export class SandHeightfield {
 
     if (minX > maxX || minY > maxY) return;
 
-    // Granular angle of repose slope threshold
-    const cardinalThreshold = 0.038;
+    // Granular angle of repose slope threshold (preserves crisp mathematical grooves, relaxes unnatural cliffs)
+    const cardinalThreshold = 0.046;
     const diagonalThreshold = cardinalThreshold * 1.414;
     const relaxRate = 0.35;
     const heights = this.heights;
@@ -767,62 +788,11 @@ export class SandHeightfield {
   }
 
   /**
-   * Adds natural sand contact berms (hachimaki) around stone perimeters.
+   * Adds natural sand contact berms around stone perimeters.
+   * Note: Removed per user directive so sand rests naturally without artificial raised rings.
    */
-  public addStoneContactBerms(stones: GardenStone[]): void {
-    if (!stones || stones.length === 0) return;
-
-    const w = this.width;
-    const h = this.height;
-    const invW = 1.0 / (w - 1);
-    const invH = 1.0 / (h - 1);
-    const heights = this.heights;
-
-    for (const s of stones) {
-      const cx = s.x;
-      const cy = s.y;
-      const rx = s.radiusX;
-      const ry = s.radiusY;
-      const maxR = Math.max(rx, ry);
-      const rimWidth = maxR * 0.45;
-      const maxDistX = rx + rimWidth;
-      const maxDistY = ry + rimWidth;
-
-      const gx0 = Math.max(0, Math.floor((cx - maxDistX) * (w - 1)));
-      const gx1 = Math.min(w - 1, Math.ceil((cx + maxDistX) * (w - 1)));
-      const gy0 = Math.max(0, Math.floor((cy - maxDistY) * (h - 1)));
-      const gy1 = Math.min(h - 1, Math.ceil((cy + maxDistY) * (h - 1)));
-
-      const cos = Math.cos(-s.rotation);
-      const sin = Math.sin(-s.rotation);
-
-      for (let gy = gy0; gy <= gy1; gy++) {
-        const yNorm = gy * invH;
-        const row = gy * w;
-
-        for (let gx = gx0; gx <= gx1; gx++) {
-          const xNorm = gx * invW;
-
-          // Local stone ellipse coordinates
-          const dx = xNorm - cx;
-          const dy = yNorm - cy;
-          const lx = dx * cos - dy * sin;
-          const ly = dx * sin + dy * cos;
-
-          const normDist = Math.hypot(lx / rx, ly / ry);
-
-          // Contact berm extends from normDist = 0.95 to 1.45
-          if (normDist >= 0.95 && normDist <= 1.45) {
-            const u = (normDist - 0.95) / 0.5; // 0..1
-            const bermH = 0.18 * Math.sin(Math.PI * u);
-            const idx = row + gx;
-            heights[idx] = Math.max(heights[idx], bermH);
-          }
-        }
-      }
-
-      this.expandDirty(gx0, gy0, gx1, gy1);
-    }
+  public addStoneContactBerms(_stones: GardenStone[]): void {
+    return;
   }
 
   /**
@@ -856,7 +826,6 @@ export class SandHeightfield {
    */
   public rebuild(elements: GardenGrooveElement[], stones: GardenStone[]): void {
     this.reset();
-    this.addStoneContactBerms(stones);
 
     for (const elem of elements) {
       this.carveElement(elem, stones);
@@ -864,6 +833,46 @@ export class SandHeightfield {
 
     this.applySettling(3, false);
     this.markAllDirty();
+  }
+
+  /**
+   * Evaluates proximity to stones (0 inside stone, smoothly ramping to 1 outside).
+   * Ensures furrow edges feather naturally to zero depth near stones with zero stair-step cliffs.
+   */
+  public getStoneProximityFactor(
+    x: number,
+    y: number,
+    stones?: GardenStone[],
+    margin = 0.012
+  ): number {
+    if (!stones || stones.length === 0) return 1.0;
+    let minFactor = 1.0;
+
+    for (const s of stones) {
+      const dx = x - s.x;
+      const dy = y - s.y;
+      const cos = Math.cos(-s.rotation);
+      const sin = Math.sin(-s.rotation);
+      const lx = dx * cos - dy * sin;
+      const ly = dx * sin + dy * cos;
+
+      const rx = s.radiusX;
+      const ry = s.radiusY;
+      const normDist = Math.hypot(lx / rx, ly / ry);
+
+      if (normDist <= 1.0) {
+        return 0.0;
+      }
+
+      const transition = Math.max(0.12, margin / Math.min(rx, ry));
+      if (normDist < 1.0 + transition) {
+        const u = (normDist - 1.0) / transition;
+        const factor = u * u * (3.0 - 2.0 * u);
+        if (factor < minFactor) minFactor = factor;
+      }
+    }
+
+    return minFactor;
   }
 
   /**
@@ -886,7 +895,7 @@ export class SandHeightfield {
       const rx = s.radiusX + margin;
       const ry = s.radiusY + margin;
 
-      if ((lx * lx) / (rx * rx) + (ly * ly) / (ry * ry) <= 1.0) {
+      if ((lx * lx) / (rx * rx) + (ly * ry) / (ry * ry) <= 1.0) {
         return true;
       }
     }
@@ -911,7 +920,7 @@ export class SandHeightfield {
     const dhX = (this.heights[idx + 1] - this.heights[idx - 1]) * 0.5 * (w / aspect);
     const dhY = (this.heights[idx + w] - this.heights[idx - w]) * 0.5 * h;
 
-    const bump = 5.2;
+    const bump = 0.55;
     const nx = -dhX * bump;
     const ny = -dhY * bump;
     const nz = 1.0;

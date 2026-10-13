@@ -86,8 +86,8 @@ export class BaseSandRenderer {
       // Subtle noise variation (-5 to +5 on RGB channels)
       for (let i = 0; i < totalPixels; i++) {
         const offset = i * 4;
-        // Fast pseudo random grain
-        const n = ((rnd() - 0.5) * 10);
+        // Silky subtle micro-variation
+        const n = ((rnd() - 0.5) * 2.5);
         data[offset] = Math.min(255, Math.max(0, data[offset] + n));
         data[offset + 1] = Math.min(255, Math.max(0, data[offset + 1] + n));
         data[offset + 2] = Math.min(255, Math.max(0, data[offset + 2] + n));

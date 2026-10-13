@@ -225,9 +225,9 @@ console.log('--- Starting Comprehensive Zen Garden Sand Physics Test Suite ---')
   console.log('   ✓ Smoothing tool leveling verified.');
 }
 
-// 7. Stone Obstacle & Contact Berm Test
+// 7. Stone Obstacle & Clean Natural Sand Contact Test
 {
-  console.log('7. Testing Stone Obstacle Exclusion & Contact Berms...');
+  console.log('7. Testing Stone Obstacle Exclusion & Clean Natural Perimeter...');
   const hf = new SandHeightfield(800, 600);
   const testStone: GardenStone = {
     id: 'test-stone',
@@ -242,13 +242,13 @@ console.log('--- Starting Comprehensive Zen Garden Sand Physics Test Suite ---')
 
   hf.addStoneContactBerms([testStone]);
 
-  // Check sand mound at perimeter along X axis (cx = 0.5, radiusX = 0.06, rim at 0.5 + 0.065)
+  // Check sand at perimeter along X axis: artificial berm removed, sand remains pristine flat (height = 0)
   const rimGx = Math.round((0.5 + 0.065) * 799);
   const rimGy = Math.round(0.5 * 599);
   const rimIdx = rimGy * 800 + rimGx;
   const rimH = hf.heights[rimIdx];
-  console.log(`   Contact berm height outside stone: ${rimH.toFixed(4)}`);
-  assert(rimH > 0.05, 'Sand must bank against stone perimeter');
+  console.log(`   Perimeter height outside stone: ${rimH.toFixed(4)} (no artificial circular ridge)`);
+  assert(rimH === 0, 'Sand must remain flat without artificial circular berms around stone');
 
   // Attempt to rake directly through stone
   hf.carveRakeSegment(
@@ -264,7 +264,7 @@ console.log('--- Starting Comprehensive Zen Garden Sand Physics Test Suite ---')
   const stoneCenterIdx = 300 * 800 + 400;
   const stoneCenterH = hf.heights[stoneCenterIdx];
   assert(stoneCenterH >= 0, 'Stone center must not be carved into by tine');
-  console.log('   ✓ Stone obstacle & contact berm verified.');
+  console.log('   ✓ Stone obstacle & clean natural perimeter verified.');
 }
 
 // 8. RakeEngine Integration, Undo/Redo & State Rebuild Test

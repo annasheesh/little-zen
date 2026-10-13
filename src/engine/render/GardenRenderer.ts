@@ -68,7 +68,7 @@ export class GardenRenderer {
 
     // 2. Render Physical 3D Granular Sand Bed (normals, diffuse, shadow, AO, micro-grain)
     // Note: all tools (rake, smooth, circle, line, wave, spiral) are simulated in 3D directly in the heightfield!
-    this.sandFieldRenderer.render(ctx, hf, width, height, palette);
+    this.sandFieldRenderer.render(ctx, hf, width, height, palette, dpr);
 
     // 4. Procedural Stones (arranged naturally over sand bed with contact berms)
     for (const stone of stones) {

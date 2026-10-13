@@ -79,18 +79,18 @@ export class StoneRenderer {
 
     // 1. Soft contact shadow beneath stone (offset towards +X, +Y for upper-left light)
     ctx.save();
-    ctx.translate(rx * 0.18, ry * 0.22);
-    ctx.scale(1.08, 1.05);
-    ctx.filter = `blur(${Math.max(2, minDim * 0.008)}px)`;
-    ctx.fillStyle = 'rgba(25, 20, 15, 0.42)';
+    ctx.translate(rx * 0.14, ry * 0.18);
+    ctx.scale(1.06, 1.04);
+    ctx.filter = `blur(${Math.max(3, minDim * 0.01)}px)`;
+    ctx.fillStyle = 'rgba(34, 28, 22, 0.24)';
     ctx.fill(path);
     ctx.restore();
 
     // 2. Deep ambient occlusion contact rim (close drop shadow)
     ctx.save();
-    ctx.translate(rx * 0.05, ry * 0.08);
-    ctx.filter = `blur(${Math.max(1, minDim * 0.003)}px)`;
-    ctx.fillStyle = 'rgba(10, 8, 5, 0.55)';
+    ctx.translate(rx * 0.04, ry * 0.06);
+    ctx.filter = `blur(${Math.max(1.5, minDim * 0.004)}px)`;
+    ctx.fillStyle = 'rgba(20, 16, 12, 0.36)';
     ctx.fill(path);
     ctx.restore();
 
@@ -104,20 +104,29 @@ export class StoneRenderer {
     // 4. Subtle dome-like 3D radial shading
     const radial = ctx.createRadialGradient(-rx * 0.25, -ry * 0.35, 0, 0, 0, Math.max(rx, ry));
     radial.addColorStop(0, style.highlightColor);
-    radial.addColorStop(0.5, 'rgba(0,0,0,0)');
-    radial.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+    radial.addColorStop(0.55, 'rgba(0, 0, 0, 0)');
+    radial.addColorStop(1, 'rgba(0, 0, 0, 0.38)');
     ctx.fillStyle = radial;
     ctx.fill(path);
 
-    // 5. Upper-left crisp rim highlight
+    // 5. Upper-left soft sunward rim glint along natural stone boundary curve (no artificial circle arc)
     ctx.save();
-    ctx.clip(path);
-    ctx.beginPath();
-    // Inner offset curve to clip against outer edge
-    ctx.arc(-rx * 0.1, -ry * 0.1, Math.max(rx, ry) * 0.95, 0, Math.PI * 2);
-    ctx.strokeStyle = style.rimColor;
-    ctx.lineWidth = Math.max(1, minDim * 0.003);
-    ctx.stroke();
+    const rimGrad = ctx.createLinearGradient(-rx * 0.85, -ry * 0.85, rx * 0.6, ry * 0.6);
+    rimGrad.addColorStop(0, style.rimColor);
+    rimGrad.addColorStop(0.35, style.highlightColor);
+    rimGrad.addColorStop(0.7, 'rgba(255, 255, 255, 0)');
+    rimGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.strokeStyle = rimGrad;
+    ctx.lineWidth = Math.max(1.2, minDim * 0.0025);
+    ctx.stroke(path);
+    ctx.restore();
+
+    // 5b. Hairline edge smoothing to prevent any sub-pixel aliasing roughness
+    ctx.save();
+    ctx.strokeStyle = style.darkColor;
+    ctx.lineWidth = 0.8;
+    ctx.globalAlpha = 0.35;
+    ctx.stroke(path);
     ctx.restore();
 
     // 6. Moss patches (if any)
@@ -149,11 +158,12 @@ export class StoneRenderer {
   }
 
   /**
-   * Generates organic stone polygon path from seed
+   * Generates organic, smooth river stone polygon path from seed using continuous harmonic perturbation.
+   * Eliminates jagged corners and rough polygonal edges for silky smooth, naturally weathered river stones.
    */
   public getStonePath(seed: number, rx: number, ry: number): Path2D {
     const path = new Path2D();
-    const numPoints = 16;
+    const numPoints = 48;
     const points: { x: number; y: number }[] = [];
 
     // Deterministic pseudo-random number generator
@@ -163,22 +173,31 @@ export class StoneRenderer {
       return (s - 1) / 2147483646;
     };
 
+    // Low-frequency harmonic decomposition (smooth macro variation, 0% high-frequency roughness)
+    const a2 = (rnd() - 0.5) * 0.09;
+    const phi2 = rnd() * Math.PI * 2;
+    const a3 = (rnd() - 0.5) * 0.045;
+    const phi3 = rnd() * Math.PI * 2;
+    const a4 = (rnd() - 0.5) * 0.02;
+    const phi4 = rnd() * Math.PI * 2;
+
     for (let i = 0; i < numPoints; i++) {
       const angle = (i / numPoints) * Math.PI * 2;
-      // Irregularity variance between 0.88 and 1.12
-      const jitter = 0.88 + rnd() * 0.24;
-      const x = Math.cos(angle) * rx * jitter;
-      const y = Math.sin(angle) * ry * jitter;
+      const rFactor = 1.0 + a2 * Math.cos(2 * angle + phi2) + a3 * Math.cos(3 * angle + phi3) + a4 * Math.cos(4 * angle + phi4);
+      const x = Math.cos(angle) * rx * rFactor;
+      const y = Math.sin(angle) * ry * rFactor;
       points.push({ x, y });
     }
 
-    // Smooth closed spline around points
-    path.moveTo(points[0].x, points[0].y);
+    // Smooth closed quadratic spline through midpoints
+    const startX = (points[0].x + points[numPoints - 1].x) * 0.5;
+    const startY = (points[0].y + points[numPoints - 1].y) * 0.5;
+    path.moveTo(startX, startY);
     for (let i = 0; i < numPoints; i++) {
       const p1 = points[i];
       const p2 = points[(i + 1) % numPoints];
-      const midX = (p1.x + p2.x) / 2;
-      const midY = (p1.y + p2.y) / 2;
+      const midX = (p1.x + p2.x) * 0.5;
+      const midY = (p1.y + p2.y) * 0.5;
       path.quadraticCurveTo(p1.x, p1.y, midX, midY);
     }
     path.closePath();

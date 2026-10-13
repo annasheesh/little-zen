@@ -4,56 +4,56 @@ export const SAND_PALETTES: Record<SandPaletteId, SandPalette> = {
   'warm-ivory': {
     id: 'warm-ivory',
     name: 'Warm Ivory',
-    baseColor: '#F3EDE2',
-    grainDark: '#C8B89D',
-    grainLight: '#F8F3E9',
-    grooveTrough: '#B6A487',
-    grooveShadow: 'rgba(60, 48, 30, 0.35)',
-    grooveHighlight: 'rgba(255, 252, 245, 0.75)',
-    ambientLight: 'rgba(255, 250, 240, 0.08)'
+    baseColor: '#F7F4EC',
+    grainDark: '#E8E2D4',
+    grainLight: '#FDFBF7',
+    grooveTrough: '#DFD6C4',
+    grooveShadow: 'rgba(96, 86, 74, 0.18)',
+    grooveHighlight: 'rgba(255, 253, 248, 0.70)',
+    ambientLight: 'rgba(255, 252, 246, 0.12)'
   },
   'natural-sand': {
     id: 'natural-sand',
     name: 'Natural Sand',
-    baseColor: '#E8DCC7',
-    grainDark: '#BAA98E',
-    grainLight: '#F4ECE0',
-    grooveTrough: '#A39276',
-    grooveShadow: 'rgba(55, 42, 26, 0.40)',
-    grooveHighlight: 'rgba(255, 250, 240, 0.70)',
-    ambientLight: 'rgba(255, 248, 235, 0.08)'
+    baseColor: '#EFE7D8',
+    grainDark: '#E2D7C3',
+    grainLight: '#FAF6EE',
+    grooveTrough: '#D6C9B3',
+    grooveShadow: 'rgba(92, 82, 68, 0.20)',
+    grooveHighlight: 'rgba(255, 252, 244, 0.65)',
+    ambientLight: 'rgba(255, 250, 240, 0.10)'
   },
   'pale-sand': {
     id: 'pale-sand',
     name: 'Pale Sand',
-    baseColor: '#F8F4EC',
-    grainDark: '#D5C9B3',
+    baseColor: '#FAF8F5',
+    grainDark: '#EDE9E1',
     grainLight: '#FFFFFF',
-    grooveTrough: '#C6B79D',
-    grooveShadow: 'rgba(70, 58, 42, 0.30)',
-    grooveHighlight: 'rgba(255, 255, 255, 0.85)',
-    ambientLight: 'rgba(255, 255, 255, 0.10)'
+    grooveTrough: '#E2DDD3',
+    grooveShadow: 'rgba(88, 85, 80, 0.15)',
+    grooveHighlight: 'rgba(255, 255, 255, 0.75)',
+    ambientLight: 'rgba(255, 255, 255, 0.12)'
   },
   'slate-sand': {
     id: 'slate-sand',
     name: 'Slate Sand',
-    baseColor: '#D9D5CD',
-    grainDark: '#A8A39B',
-    grainLight: '#ECE8E1',
-    grooveTrough: '#918C83',
-    grooveShadow: 'rgba(40, 42, 45, 0.40)',
-    grooveHighlight: 'rgba(255, 255, 255, 0.65)',
-    ambientLight: 'rgba(240, 242, 245, 0.06)'
+    baseColor: '#E6E4DF',
+    grainDark: '#D5D2CC',
+    grainLight: '#F4F3F0',
+    grooveTrough: '#C4C1B9',
+    grooveShadow: 'rgba(72, 75, 80, 0.20)',
+    grooveHighlight: 'rgba(255, 255, 255, 0.60)',
+    ambientLight: 'rgba(248, 250, 252, 0.10)'
   },
   'moss-zen': {
     id: 'moss-zen',
     name: 'Moss Ground',
-    baseColor: '#DFDDD0',
-    grainDark: '#A2A590',
-    grainLight: '#EFF0E6',
-    grooveTrough: '#90957F',
-    grooveShadow: 'rgba(45, 52, 38, 0.38)',
-    grooveHighlight: 'rgba(255, 255, 250, 0.70)',
-    ambientLight: 'rgba(245, 250, 240, 0.08)'
+    baseColor: '#E8E7DC',
+    grainDark: '#D6D7C7',
+    grainLight: '#F6F6EE',
+    grooveTrough: '#C5C7B5',
+    grooveShadow: 'rgba(68, 76, 60, 0.18)',
+    grooveHighlight: 'rgba(255, 255, 250, 0.62)',
+    ambientLight: 'rgba(250, 254, 246, 0.10)'
   }
 };
