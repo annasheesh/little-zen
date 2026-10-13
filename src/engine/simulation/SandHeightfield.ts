@@ -312,11 +312,18 @@ export class SandHeightfield {
           }
         } else if (totalBermDelta > 0) {
           // Inside lateral berm / merged crest between tines:
-          // Target elevation determined cleanly by displacement geometry
-          const targetBerm = Math.min(maxBerm, totalBermDelta * stoneFactor);
+          // Soft-knee rounding prevents flat mesa tabletops and sharp angular creases along ridge crests
+          const knee = maxBerm * 0.70;
+          let targetBerm = totalBermDelta;
+          if (totalBermDelta > knee) {
+            const excess = totalBermDelta - knee;
+            const cap = maxBerm - knee;
+            targetBerm = knee + cap * (excess / (cap + excess));
+          }
+          targetBerm *= stoneFactor;
 
           if (curH < targetBerm) {
-            // Sand pushed upward to clean ridge height
+            // Sand pushed upward to clean rounded ridge height
             heights[idx] = targetBerm;
           }
         }
@@ -460,7 +467,14 @@ export class SandHeightfield {
           const effTroughH = bestTroughH * stoneFactor;
           heights[idx] = curH > effTroughH ? effTroughH : Math.min(curH, effTroughH);
         } else if (totalRingBerm > 0) {
-          const targetBerm = Math.min(maxBerm, totalRingBerm * stoneFactor);
+          const knee = maxBerm * 0.70;
+          let targetBerm = totalRingBerm;
+          if (totalRingBerm > knee) {
+            const excess = totalRingBerm - knee;
+            const cap = maxBerm - knee;
+            targetBerm = knee + cap * (excess / (cap + excess));
+          }
+          targetBerm *= stoneFactor;
           heights[idx] = curH < targetBerm ? targetBerm : curH;
         }
       }
@@ -920,7 +934,7 @@ export class SandHeightfield {
     const dhX = (this.heights[idx + 1] - this.heights[idx - 1]) * 0.5 * (w / aspect);
     const dhY = (this.heights[idx + w] - this.heights[idx - w]) * 0.5 * h;
 
-    const bump = 0.55;
+    const bump = 0.32;
     const nx = -dhX * bump;
     const ny = -dhY * bump;
     const nz = 1.0;

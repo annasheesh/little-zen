@@ -344,7 +344,6 @@ export class RakeEngine implements InputHandler {
                 this.smoothedNormal ?? undefined
               );
             }
-            this.heightfield.applySettling(1, true);
 
             this.activeElement.points.push({ x: e.x, y: e.y, time: performance.now() });
             this.lastPoint = { x: e.x, y: e.y };

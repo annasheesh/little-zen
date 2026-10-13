@@ -140,44 +140,60 @@ export class SandFieldRenderer {
       in vec2 v_uv;
       out vec4 fragColor;
 
-      // C2-continuous quintic smootherstep sampler for silky smooth surface heights
-      float sampleHeight(vec2 uv) {
+      // High-fidelity C1-continuous surface height and analytical gradient reconstruction
+      // Solves corrugated stairstepping by interpolating corner central-difference gradients
+      void sampleHeightAndNormal(vec2 uv, out float outH, out vec3 outNormal) {
         vec2 texel = 1.0 / u_resolution;
         vec2 pos = clamp(uv, 0.0, 1.0) * u_resolution - 0.5;
         vec2 f = fract(pos);
-        // Perlin quintic smootherstep: 6f^5 - 15f^4 + 10f^3 (zero 1st & 2nd derivatives at edges)
-        vec2 s = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+        // Smoothstep Hermite blend factor for C1 continuous corner gradient blending
+        vec2 s = f * f * (3.0 - 2.0 * f);
         vec2 b = (floor(pos) + 0.5) * texel;
+
+        // Sample 4x4 footprint for corner heights and central difference gradients
         float h00 = texture(u_heightmap, b).r;
         float h10 = texture(u_heightmap, b + vec2(texel.x, 0.0)).r;
         float h01 = texture(u_heightmap, b + vec2(0.0, texel.y)).r;
         float h11 = texture(u_heightmap, b + texel).r;
-        return mix(mix(h00, h10, s.x), mix(h01, h11, s.x), s.y);
+
+        // Height interpolated across 4 corners
+        outH = mix(mix(h00, h10, s.x), mix(h01, h11, s.x), s.y);
+
+        // Corner central difference gradients
+        float hL0 = texture(u_heightmap, b + vec2(-texel.x, 0.0)).r;
+        float hR0 = texture(u_heightmap, b + vec2(2.0 * texel.x, 0.0)).r;
+        float hL1 = texture(u_heightmap, b + vec2(-texel.x, texel.y)).r;
+        float hR1 = texture(u_heightmap, b + vec2(2.0 * texel.x, texel.y)).r;
+
+        float h0U = texture(u_heightmap, b + vec2(0.0, -texel.y)).r;
+        float h0D = texture(u_heightmap, b + vec2(0.0, 2.0 * texel.y)).r;
+        float h1U = texture(u_heightmap, b + vec2(texel.x, -texel.y)).r;
+        float h1D = texture(u_heightmap, b + vec2(texel.x, 2.0 * texel.y)).r;
+
+        float gx00 = (h10 - hL0) * 0.5;
+        float gx10 = (hR0 - h00) * 0.5;
+        float gx01 = (h11 - hL1) * 0.5;
+        float gx11 = (hR1 - h01) * 0.5;
+
+        float gy00 = (h01 - h0U) * 0.5;
+        float gy10 = (h11 - h1U) * 0.5;
+        float gy01 = (h0D - h00) * 0.5;
+        float gy11 = (h1D - h10) * 0.5;
+
+        float invAspect = 1.0 / max(0.1, u_aspectRatio);
+        float dhX = mix(mix(gx00, gx10, s.x), mix(gx01, gx11, s.x), s.y) * (u_resolution.x * invAspect);
+        float dhY = mix(mix(gy00, gy10, s.x), mix(gy01, gy11, s.x), s.y) * u_resolution.y;
+
+        // Silky, organic sand slope matching natural Shirakawa sand repose
+        float bump = 0.32;
+        outNormal = normalize(vec3(-dhX * bump, -dhY * bump, 1.0));
       }
 
       void main() {
         vec2 texel = 1.0 / u_resolution;
-        float h = sampleHeight(v_uv);
-
-        // 1. Surface normal computation via 3x3 Sobel kernel with aspect ratio correction
-        // v_uv - vec2(0.0, texel.y) is UP on canvas (-Y)
-        // v_uv + vec2(0.0, texel.y) is DOWN on canvas (+Y)
-        float hUL = sampleHeight(v_uv + vec2(-texel.x, -texel.y));
-        float hU  = sampleHeight(v_uv + vec2( 0.0,     -texel.y));
-        float hUR = sampleHeight(v_uv + vec2( texel.x, -texel.y));
-        float hL  = sampleHeight(v_uv + vec2(-texel.x,  0.0));
-        float hR  = sampleHeight(v_uv + vec2( texel.x,  0.0));
-        float hDL = sampleHeight(v_uv + vec2(-texel.x,  texel.y));
-        float hD  = sampleHeight(v_uv + vec2( 0.0,      texel.y));
-        float hDR = sampleHeight(v_uv + vec2( texel.x,  texel.y));
-
-        float invAspect = 1.0 / max(0.1, u_aspectRatio);
-        float dhX = ((hUR + 2.0 * hR + hDR) - (hUL + 2.0 * hL + hDL)) * 0.125 * (u_resolution.x * invAspect);
-        float dhY = ((hDL + 2.0 * hD + hDR) - (hUL + 2.0 * hU + hUR)) * 0.125 * u_resolution.y;
-
-        // Gentle, natural bump slope (~30 deg angle of repose for silky Japanese rock garden sand)
-        float bump = 0.55;
-        vec3 normal = normalize(vec3(-dhX * bump, -dhY * bump, 1.0));
+        float h;
+        vec3 normal;
+        sampleHeightAndNormal(v_uv, h, normal);
 
         // 2. Gentle natural daylight from North-West (Upper-Left)
         vec3 lightDir = normalize(vec3(-0.45, -0.55, 0.70));
@@ -185,41 +201,39 @@ export class SandFieldRenderer {
         float directDiff = max(0.0, NdotL);
         // Hemispherical wrap daylight: simulates bright outdoor sky illumination
         float wrapDiff = clamp((NdotL + 0.50) / 1.50, 0.0, 1.0);
-        // Normalized so unraked flat ground (normal 0,0,1) receives exactly 1.00 baseline daylight
         float flatWrapDiff = (0.7018 + 0.50) / 1.50;
         float diffuseIllum = (0.55 + 0.45 * wrapDiff) / (0.55 + 0.45 * flatWrapDiff);
 
-        // 3. Directional self-shadowing with soft penumbra raymarching:
-        // Raymarch along isotropic 2D sunlight direction towards the sun
+        // 3. Directional self-shadowing with soft penumbra accumulation
+        float invAspect = 1.0 / max(0.1, u_aspectRatio);
         vec2 sunDir2D = normalize(vec2(lightDir.x * invAspect, lightDir.y));
-        vec2 rayStep = sunDir2D * texel * 2.2;
-        float maxOcclusion = 0.0;
+        vec2 rayStep = sunDir2D * texel * 1.8;
+        float minPenumbra = 1.0;
         for (int i = 1; i <= 8; i++) {
           float fi = float(i);
-          float sH = sampleHeight(v_uv + rayStep * fi);
-          float rayRise = h + fi * 0.022;
+          vec2 sampleUV = v_uv + rayStep * fi;
+          float sH = texture(u_heightmap, clamp(sampleUV, 0.0, 1.0)).r;
+          float rayRise = h + fi * 0.024;
           float diffH = sH - rayRise;
           if (diffH > 0.0) {
-            float occ = clamp(diffH * 14.0, 0.0, 1.0) / (1.0 + fi * 0.40);
-            maxOcclusion = max(maxOcclusion, occ);
+            float pen = 1.0 - clamp(diffH * 8.0, 0.0, 1.0) / (1.0 + fi * 0.50);
+            minPenumbra = min(minPenumbra, pen);
           }
         }
-        float shadow = 1.0 - maxOcclusion * 0.28;
+        float shadow = mix(0.72, 1.0, smoothstep(0.0, 1.0, minPenumbra));
 
-        // 4. Subtle, elegant ambient occlusion in furrows (never dark or muddy)
+        // 4. Subtle, elegant ambient occlusion in furrows
         float troughDepth = clamp(-h * 2.0, 0.0, 1.0);
-        float ao = 1.0 - troughDepth * 0.16;
+        float ao = 1.0 - troughDepth * 0.15;
 
         // 5. Sand Palette Shading: pristine baseline ivory-cream across flat sand
         vec3 col = u_baseColor;
         if (h < 0.0) {
-          // Monotonic valid GLSL smooth transition into warm groove trough
           float troughFactor = 1.0 - smoothstep(-0.30, 0.0, h);
-          col = mix(u_baseColor, u_grooveTrough, troughFactor * 0.70);
+          col = mix(u_baseColor, u_grooveTrough, troughFactor * 0.65);
         } else {
-          // Silky transition toward luminous crest tone on ridges
           float ridgeFactor = smoothstep(0.0, 0.16, h);
-          col = mix(u_baseColor, u_grainLight, ridgeFactor * 0.75);
+          col = mix(u_baseColor, u_grainLight, ridgeFactor * 0.70);
         }
 
         // Illumination combining balanced daylight, soft shadow penumbra, and gentle AO
@@ -228,18 +242,18 @@ export class SandFieldRenderer {
         // Delicate crest sun sheen on sunny slopes (smooth Hermite easing, no harsh cutoff)
         if (directDiff > 0.05 && h > 0.005) {
           float crest = smoothstep(0.005, 0.15, h);
-          float sunGleam = pow(directDiff, 2.4) * crest * shadow;
-          lit = mix(lit, u_grooveHighlight.rgb, sunGleam * u_grooveHighlight.a * 0.45);
+          float sunGleam = pow(directDiff, 2.5) * crest * shadow;
+          lit = mix(lit, u_grooveHighlight.rgb, sunGleam * u_grooveHighlight.a * 0.40);
         }
 
-        // Soft atmospheric furrow shadow tint (subtle cool/warm depth, no muddy sludge)
+        // Soft atmospheric furrow shadow tint (subtle depth, no muddy sludge)
         if (shadow < 0.99 && h < -0.01) {
           float furrowWeight = 1.0 - smoothstep(-0.25, -0.01, h);
-          float shWeight = (1.0 - shadow) * furrowWeight * u_grooveShadow.a * 0.40;
+          float shWeight = (1.0 - shadow) * furrowWeight * u_grooveShadow.a * 0.35;
           lit = mix(lit, u_grooveShadow.rgb, shWeight);
         }
 
-        // 6. Sub-pixel screen-space velvet dither (prevents 8-bit color banding, 100% invisible as noise)
+        // 6. Sub-pixel screen-space velvet dither
         float dither = (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * (0.8 / 255.0);
         lit += dither;
 
@@ -282,38 +296,57 @@ export class SandFieldRenderer {
       uniform vec4 u_grooveHighlight;
       varying vec2 v_uv;
 
-      float sampleHeight(vec2 uv) {
+      float getH1(vec2 uv) {
+        return texture2D(u_heightmap, clamp(uv, 0.0, 1.0)).r * 2.0 - 1.0;
+      }
+
+      void sampleHeightAndNormal(vec2 uv, out float outH, out vec3 outNormal) {
         vec2 texel = 1.0 / u_resolution;
         vec2 pos = clamp(uv, 0.0, 1.0) * u_resolution - 0.5;
         vec2 f = fract(pos);
-        vec2 s = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+        vec2 s = f * f * (3.0 - 2.0 * f);
         vec2 b = (floor(pos) + 0.5) * texel;
-        float h00 = texture2D(u_heightmap, b).r * 2.0 - 1.0;
-        float h10 = texture2D(u_heightmap, b + vec2(texel.x, 0.0)).r * 2.0 - 1.0;
-        float h01 = texture2D(u_heightmap, b + vec2(0.0, texel.y)).r * 2.0 - 1.0;
-        float h11 = texture2D(u_heightmap, b + texel).r * 2.0 - 1.0;
-        return mix(mix(h00, h10, s.x), mix(h01, h11, s.x), s.y);
+
+        float h00 = getH1(b);
+        float h10 = getH1(b + vec2(texel.x, 0.0));
+        float h01 = getH1(b + vec2(0.0, texel.y));
+        float h11 = getH1(b + texel);
+
+        outH = mix(mix(h00, h10, s.x), mix(h01, h11, s.x), s.y);
+
+        float hL0 = getH1(b + vec2(-texel.x, 0.0));
+        float hR0 = getH1(b + vec2(2.0 * texel.x, 0.0));
+        float hL1 = getH1(b + vec2(-texel.x, texel.y));
+        float hR1 = getH1(b + vec2(2.0 * texel.x, texel.y));
+
+        float h0U = getH1(b + vec2(0.0, -texel.y));
+        float h0D = getH1(b + vec2(0.0, 2.0 * texel.y));
+        float h1U = getH1(b + vec2(texel.x, -texel.y));
+        float h1D = getH1(b + vec2(texel.x, 2.0 * texel.y));
+
+        float gx00 = (h10 - hL0) * 0.5;
+        float gx10 = (hR0 - h00) * 0.5;
+        float gx01 = (h11 - hL1) * 0.5;
+        float gx11 = (hR1 - h01) * 0.5;
+
+        float gy00 = (h01 - h0U) * 0.5;
+        float gy10 = (h11 - h1U) * 0.5;
+        float gy01 = (h0D - h00) * 0.5;
+        float gy11 = (h1D - h10) * 0.5;
+
+        float invAspect = 1.0 / max(0.1, u_aspectRatio);
+        float dhX = mix(mix(gx00, gx10, s.x), mix(gx01, gx11, s.x), s.y) * (u_resolution.x * invAspect);
+        float dhY = mix(mix(gy00, gy10, s.x), mix(gy01, gy11, s.x), s.y) * u_resolution.y;
+
+        float bump = 0.32;
+        outNormal = normalize(vec3(-dhX * bump, -dhY * bump, 1.0));
       }
 
       void main() {
         vec2 texel = 1.0 / u_resolution;
-        float h = sampleHeight(v_uv);
-
-        float hUL = sampleHeight(v_uv + vec2(-texel.x, -texel.y));
-        float hU  = sampleHeight(v_uv + vec2( 0.0,     -texel.y));
-        float hUR = sampleHeight(v_uv + vec2( texel.x, -texel.y));
-        float hL  = sampleHeight(v_uv + vec2(-texel.x,  0.0));
-        float hR  = sampleHeight(v_uv + vec2( texel.x,  0.0));
-        float hDL = sampleHeight(v_uv + vec2(-texel.x,  texel.y));
-        float hD  = sampleHeight(v_uv + vec2( 0.0,      texel.y));
-        float hDR = sampleHeight(v_uv + vec2( texel.x,  texel.y));
-
-        float invAspect = 1.0 / max(0.1, u_aspectRatio);
-        float dhX = ((hUR + 2.0 * hR + hDR) - (hUL + 2.0 * hL + hDL)) * 0.125 * (u_resolution.x * invAspect);
-        float dhY = ((hDL + 2.0 * hD + hDR) - (hUL + 2.0 * hU + hUR)) * 0.125 * u_resolution.y;
-
-        float bump = 0.55;
-        vec3 normal = normalize(vec3(-dhX * bump, -dhY * bump, 1.0));
+        float h;
+        vec3 normal;
+        sampleHeightAndNormal(v_uv, h, normal);
 
         vec3 lightDir = normalize(vec3(-0.45, -0.55, 0.70));
         float NdotL = dot(normal, lightDir);
@@ -323,43 +356,46 @@ export class SandFieldRenderer {
         float diffuseIllum = (0.55 + 0.45 * wrapDiff) / (0.55 + 0.45 * flatWrapDiff);
 
         // Soft penumbra raymarch along isotropic sun direction
+        float invAspect = 1.0 / max(0.1, u_aspectRatio);
         vec2 sunDir2D = normalize(vec2(lightDir.x * invAspect, lightDir.y));
-        vec2 rayStep = sunDir2D * texel * 2.2;
-        float maxOcclusion = 0.0;
+        vec2 rayStep = sunDir2D * texel * 1.8;
+        float minPenumbra = 1.0;
         for (int i = 1; i <= 6; i++) {
           float fi = float(i);
-          float sH = sampleHeight(v_uv + rayStep * fi);
-          float diffH = sH - (h + fi * 0.022);
+          vec2 sampleUV = v_uv + rayStep * fi;
+          float sH = getH1(sampleUV);
+          float rayRise = h + fi * 0.024;
+          float diffH = sH - rayRise;
           if (diffH > 0.0) {
-            float occ = clamp(diffH * 14.0, 0.0, 1.0) / (1.0 + fi * 0.40);
-            maxOcclusion = max(maxOcclusion, occ);
+            float pen = 1.0 - clamp(diffH * 8.0, 0.0, 1.0) / (1.0 + fi * 0.50);
+            minPenumbra = min(minPenumbra, pen);
           }
         }
-        float shadow = 1.0 - maxOcclusion * 0.28;
+        float shadow = mix(0.72, 1.0, clamp(minPenumbra, 0.0, 1.0));
 
         float troughDepth = clamp(-h * 2.0, 0.0, 1.0);
-        float ao = 1.0 - troughDepth * 0.16;
+        float ao = 1.0 - troughDepth * 0.15;
 
         vec3 col = u_baseColor;
         if (h < 0.0) {
           float troughFactor = clamp(-h * 3.33, 0.0, 1.0);
-          col = mix(u_baseColor, u_grooveTrough, troughFactor * 0.70);
+          col = mix(u_baseColor, u_grooveTrough, troughFactor * 0.65);
         } else {
           float ridgeFactor = clamp(h * 6.25, 0.0, 1.0);
-          col = mix(u_baseColor, u_grainLight, ridgeFactor * 0.75);
+          col = mix(u_baseColor, u_grainLight, ridgeFactor * 0.70);
         }
 
         vec3 lit = col * (diffuseIllum * shadow) * ao;
 
         if (directDiff > 0.05 && h > 0.005) {
           float crest = clamp((h - 0.005) * 6.9, 0.0, 1.0);
-          float sunGleam = pow(directDiff, 2.4) * crest * shadow;
-          lit = mix(lit, u_grooveHighlight.rgb, sunGleam * u_grooveHighlight.a * 0.45);
+          float sunGleam = pow(directDiff, 2.5) * crest * shadow;
+          lit = mix(lit, u_grooveHighlight.rgb, sunGleam * u_grooveHighlight.a * 0.40);
         }
 
         if (shadow < 0.99 && h < -0.01) {
           float furrowWeight = clamp((-h - 0.01) * 4.16, 0.0, 1.0);
-          float shWeight = (1.0 - shadow) * furrowWeight * u_grooveShadow.a * 0.40;
+          float shWeight = (1.0 - shadow) * furrowWeight * u_grooveShadow.a * 0.35;
           lit = mix(lit, u_grooveShadow.rgb, shWeight);
         }
 
@@ -599,7 +635,7 @@ export class SandFieldRenderer {
     const shadow = parseColor(palette.grooveShadow);
     const highlight = parseColor(palette.grooveHighlight);
 
-    const bump = 0.55;
+    const bump = 0.32;
     // Light direction (-0.45, -0.55, 0.70) normalized
     const lx = -0.45;
     const ly = -0.55;
@@ -650,7 +686,7 @@ export class SandFieldRenderer {
 
         // Smooth ambient occlusion
         const troughDepth = Math.max(0, Math.min(1, -hVal * 2.0));
-        const ao = 1.0 - troughDepth * 0.16;
+        const ao = 1.0 - troughDepth * 0.15;
 
         // Soft continuous penumbra berm self-shadowing towards sun
         let maxOcc = 0;
@@ -665,14 +701,14 @@ export class SandFieldRenderer {
           const sStepY = Math.round(stepNormY * i * 2.2);
           const sIdx = (y + sStepY) * fw + (x + sStepX);
           if (sIdx >= 0 && sIdx < heights.length) {
-            const clearH = hVal + i * 0.022;
+            const clearH = hVal + i * 0.024;
             if (heights[sIdx] > clearH) {
-              const occ = Math.min(1.0, (heights[sIdx] - clearH) * 14.0) / (1.0 + i * 0.40);
+              const occ = Math.min(1.0, (heights[sIdx] - clearH) * 8.0) / (1.0 + i * 0.50);
               if (occ > maxOcc) maxOcc = occ;
             }
           }
         }
-        const shadowFactor = 1.0 - maxOcc * 0.28;
+        const shadowFactor = 1.0 - maxOcc * 0.22;
 
         // Color interpolation with pristine base color for flat sand
         let r = base.r;
