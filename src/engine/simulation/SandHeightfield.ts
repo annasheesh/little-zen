@@ -9,6 +9,7 @@ import {
   GardenStone,
   Point
 } from '../../types/garden';
+import { getStoneRadiusFactor } from '../render/StoneRenderer';
 
 export interface DirtyRect {
   minX: number;
@@ -850,47 +851,55 @@ export class SandHeightfield {
   }
 
   /**
-   * Evaluates proximity to stones (0 inside stone, smoothly ramping to 1 outside).
-   * Ensures furrow edges feather naturally to zero depth near stones with zero stair-step cliffs.
+   * Evaluates proximity to stones (0 inside stone body, 1 outside).
+   * Uses aspect-correct isotropic coordinates matching StoneRenderer.
+   * Allows 100% full drawing and raking right around the stone perimeter without phantom deadzones.
    */
   public getStoneProximityFactor(
     x: number,
     y: number,
-    stones?: GardenStone[],
-    margin = 0.012
+    stones?: GardenStone[]
   ): number {
     if (!stones || stones.length === 0) return 1.0;
-    let minFactor = 1.0;
+    const aspect = this.aspectRatio;
+    const scale = Math.min(aspect, 1.0);
 
     for (const s of stones) {
-      const dx = x - s.x;
-      const dy = y - s.y;
+      // Isotropic coordinates matching StoneRenderer
+      const dxIso = (x - s.x) * aspect;
+      const dyIso = y - s.y;
       const cos = Math.cos(-s.rotation);
       const sin = Math.sin(-s.rotation);
-      const lx = dx * cos - dy * sin;
-      const ly = dx * sin + dy * cos;
+      const lxIso = dxIso * cos - dyIso * sin;
+      const lyIso = dxIso * sin + dyIso * cos;
 
-      const rx = s.radiusX;
-      const ry = s.radiusY;
-      const normDist = Math.hypot(lx / rx, ly / ry);
+      const rxIso = s.radiusX * scale;
+      const ryIso = s.radiusY * scale;
 
-      if (normDist <= 1.0) {
+      const localX = lxIso / rxIso;
+      const localY = lyIso / ryIso;
+      const angle = Math.atan2(localY, localX);
+      const rFactor = getStoneRadiusFactor(s.seed, s.type, angle);
+      const normDist = Math.hypot(localX, localY) / rFactor;
+
+      // Inside solid stone: tines cannot carve into stone foundation
+      if (normDist <= 0.98) {
         return 0.0;
       }
-
-      const transition = Math.max(0.12, margin / Math.min(rx, ry));
-      if (normDist < 1.0 + transition) {
-        const u = (normDist - 1.0) / transition;
-        const factor = u * u * (3.0 - 2.0 * u);
-        if (factor < minFactor) minFactor = factor;
+      // Hairline smooth transition right at boundary (0.98 to 1.02, ~1 pixel)
+      if (normDist < 1.02) {
+        const u = (normDist - 0.98) / 0.04;
+        return u * u * (3.0 - 2.0 * u);
       }
+      // Outside the stone: sand is 100% carvable!
     }
 
-    return minFactor;
+    return 1.0;
   }
 
   /**
-   * Checks if normalized point is inside any stone ellipse.
+   * Checks if normalized point is inside any stone silhouette.
+   * Uses aspect-correct isotropic coordinates matching StoneRenderer.
    */
   public isInsideAnyStone(
     x: number,
@@ -898,18 +907,28 @@ export class SandHeightfield {
     stones: GardenStone[],
     margin = 0
   ): boolean {
+    if (!stones || stones.length === 0) return false;
+    const aspect = this.aspectRatio;
+    const scale = Math.min(aspect, 1.0);
+
     for (const s of stones) {
-      const dx = x - s.x;
-      const dy = y - s.y;
+      const dxIso = (x - s.x) * aspect;
+      const dyIso = y - s.y;
       const cos = Math.cos(-s.rotation);
       const sin = Math.sin(-s.rotation);
-      const lx = dx * cos - dy * sin;
-      const ly = dx * sin + dy * cos;
+      const lxIso = dxIso * cos - dyIso * sin;
+      const lyIso = dxIso * sin + dyIso * cos;
 
-      const rx = s.radiusX + margin;
-      const ry = s.radiusY + margin;
+      const rxIso = s.radiusX * scale;
+      const ryIso = s.radiusY * scale;
 
-      if ((lx * lx) / (rx * rx) + (ly * ry) / (ry * ry) <= 1.0) {
+      const localX = lxIso / rxIso;
+      const localY = lyIso / ryIso;
+      const angle = Math.atan2(localY, localX);
+      const rFactor = getStoneRadiusFactor(s.seed, s.type, angle);
+      const normDist = Math.hypot(localX, localY) / rFactor;
+
+      if (normDist <= 1.0 + margin) {
         return true;
       }
     }

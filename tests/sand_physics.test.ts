@@ -264,6 +264,21 @@ console.log('--- Starting Comprehensive Zen Garden Sand Physics Test Suite ---')
   const stoneCenterIdx = 300 * 800 + 400;
   const stoneCenterH = hf.heights[stoneCenterIdx];
   assert(stoneCenterH >= 0, 'Stone center must not be carved into by tine');
+
+  // Verify raking around the stone (just outside perimeter) works freely with NO deadzone
+  hf.carveRakeSegment(
+    { x: 0.3, y: 0.42 },
+    { x: 0.7, y: 0.42 },
+    [0],
+    0.015,
+    1.0,
+    [testStone]
+  );
+  const aroundIdx = Math.round(0.42 * 599) * 800 + Math.round(0.5 * 799);
+  const aroundH = hf.heights[aroundIdx];
+  console.log(`   Raking around stone height at y=0.42: ${aroundH.toFixed(4)} (carved cleanly)`);
+  assert(aroundH < -0.15, 'Raking around the stone must carve deep furrows with no deadzones');
+
   console.log('   ✓ Stone obstacle & clean natural perimeter verified.');
 }
 

@@ -14,6 +14,7 @@ import {
 } from '../types/garden';
 import { GardenInputEvent, InputHandler, InputSource } from './input/types';
 import { SandHeightfield } from './simulation/SandHeightfield';
+import { getStoneRadiusFactor } from './render/StoneRenderer';
 
 export interface RakeEngineOptions {
   onStateChange?: () => void;
@@ -522,10 +523,27 @@ export class RakeEngine implements InputHandler {
 
   private handleStoneStart(x: number, y: number) {
     let clickedStone: GardenStone | null = null;
+    const aspect = this.heightfield.getAspectRatio();
+    const scale = Math.min(aspect, 1.0);
+
     for (let i = this.stones.length - 1; i >= 0; i--) {
       const s = this.stones[i];
-      const dist = Math.hypot((x - s.x) / s.radiusX, (y - s.y) / s.radiusY);
-      if (dist <= 1.2) {
+      const dxIso = (x - s.x) * aspect;
+      const dyIso = y - s.y;
+      const cos = Math.cos(-s.rotation);
+      const sin = Math.sin(-s.rotation);
+      const lxIso = dxIso * cos - dyIso * sin;
+      const lyIso = dxIso * sin + dyIso * cos;
+
+      const rxIso = s.radiusX * scale;
+      const ryIso = s.radiusY * scale;
+
+      const localX = lxIso / rxIso;
+      const localY = lyIso / ryIso;
+      const angle = Math.atan2(localY, localX);
+      const rFactor = getStoneRadiusFactor(s.seed, s.type, angle);
+      const dist = Math.hypot(localX, localY) / rFactor;
+      if (dist <= 1.15) {
         clickedStone = s;
         break;
       }
