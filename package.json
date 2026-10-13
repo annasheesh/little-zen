@@ -1,8 +1,25 @@
 {
   "name": "little-zen",
-  "private": true,
+  "private": false,
+  "license": "MIT",
   "version": "1.0.0",
   "description": "A beautiful desktop Zen garden with realistic sand raking, stones, and webcam Air Rake",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/annasheesh/little-zen.git"
+  },
+  "keywords": [
+    "zen-garden",
+    "karesansui",
+    "mediapipe",
+    "hand-tracking",
+    "canvas",
+    "relaxation",
+    "mindfulness",
+    "react",
+    "typescript",
+    "electron"
+  ],
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",

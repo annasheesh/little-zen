@@ -1,5 +1,10 @@
 # Little Zen (リトル禅)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Open Source Love](https://badges.frapsoft.com/os/v1/open-source.svg?v=103)](https://github.com/annasheesh/little-zen)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](https://react.dev/)
+
 > *"When your mind gets messy, rake the sand."*
 
 A beautiful, minimalist Japanese karesansui-inspired desktop Zen garden application. Users can rake fine virtual sand, arrange natural stones, generate geometric and wave patterns, relax with ambient soundscapes and guided breathing, or control the sand entirely touch-free through webcam hand tracking (**Air Rake**).
@@ -116,3 +121,16 @@ This generates the packaged installer for your operating system in `dist/`.
    - Move your pinched hand across the space to rake.
    - **Release** the pinch to complete the stroke and pause.
 4. Customize sensitivity, cursor smoothing, and pinch trigger threshold in the Air Rake settings modal anytime.
+
+---
+
+## Contributing
+
+Contributions, issues, and feature requests are welcome! Feel free to check out the [Contributing Guide](CONTRIBUTING.md) and open an issue or pull request.
+
+---
+
+## License
+
+This project is open source and available under the [MIT License](LICENSE).
+
