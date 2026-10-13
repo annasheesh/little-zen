@@ -1,6 +1,8 @@
 import { BaseSandRenderer } from './BaseSandRenderer';
 import { GrooveRenderer } from './GrooveRenderer';
 import { StoneRenderer } from './StoneRenderer';
+import { SandFieldRenderer } from './SandFieldRenderer';
+import { SandHeightfield } from '../simulation/SandHeightfield';
 import { SAND_PALETTES } from './palettes';
 import {
   GardenGrooveElement,
@@ -12,11 +14,17 @@ export class GardenRenderer {
   private baseSandRenderer: BaseSandRenderer;
   private grooveRenderer: GrooveRenderer;
   private stoneRenderer: StoneRenderer;
+  private sandFieldRenderer: SandFieldRenderer;
+  private internalHeightfield: SandHeightfield;
+  private lastElementCount = -1;
+  private lastStoneCount = -1;
 
   constructor() {
     this.baseSandRenderer = new BaseSandRenderer();
     this.grooveRenderer = new GrooveRenderer();
     this.stoneRenderer = new StoneRenderer();
+    this.sandFieldRenderer = new SandFieldRenderer();
+    this.internalHeightfield = new SandHeightfield(1024, 768);
   }
 
   /**
@@ -31,7 +39,8 @@ export class GardenRenderer {
     elements: GardenGrooveElement[],
     activeElement: GardenGrooveElement | null,
     stones: GardenStone[],
-    selectedStoneId: string | null
+    selectedStoneId: string | null,
+    heightfield?: SandHeightfield
   ) {
     const palette = SAND_PALETTES[paletteId] || SAND_PALETTES['warm-ivory'];
 
@@ -39,18 +48,29 @@ export class GardenRenderer {
     // Scale for High-DPI crisp rendering
     ctx.scale(dpr, dpr);
 
-    // 1. Procedural Sand Base Texture
-    this.baseSandRenderer.render(ctx, width, height, palette);
-
-    // 2. Committed Rake Grooves
-    this.grooveRenderer.renderElements(ctx, elements, width, height, palette);
-
-    // 3. Active in-progress stroke / pattern preview
-    if (activeElement) {
-      this.grooveRenderer.renderElement(ctx, activeElement, width, height, palette);
+    // 1. Determine active heightfield
+    let hf = heightfield;
+    if (!hf) {
+      if (
+        this.lastElementCount !== elements.length ||
+        this.lastStoneCount !== stones.length
+      ) {
+        this.internalHeightfield.rebuild(elements, stones);
+        this.lastElementCount = elements.length;
+        this.lastStoneCount = stones.length;
+      }
+      hf = this.internalHeightfield;
     }
 
-    // 4. Procedural Stones (arranged naturally over sand)
+    if (width > 0 && height > 0) {
+      hf.setAspectRatio(width / height);
+    }
+
+    // 2. Render Physical 3D Granular Sand Bed (normals, diffuse, shadow, AO, micro-grain)
+    // Note: all tools (rake, smooth, circle, line, wave, spiral) are simulated in 3D directly in the heightfield!
+    this.sandFieldRenderer.render(ctx, hf, width, height, palette);
+
+    // 4. Procedural Stones (arranged naturally over sand bed with contact berms)
     for (const stone of stones) {
       const isSelected = stone.id === selectedStoneId;
       this.stoneRenderer.renderStone(ctx, stone, width, height, isSelected);
@@ -68,13 +88,23 @@ export class GardenRenderer {
     paletteId: SandPaletteId,
     elements: GardenGrooveElement[],
     stones: GardenStone[],
-    scale = 2
+    scale = 2,
+    sourceHeightfield?: SandHeightfield
   ): string {
     const offscreen = document.createElement('canvas');
     offscreen.width = width * scale;
     offscreen.height = height * scale;
     const ctx = offscreen.getContext('2d');
     if (!ctx) return '';
+
+    let exportField = sourceHeightfield;
+    if (!exportField) {
+      exportField = new SandHeightfield(
+        Math.min(2048, Math.floor(width * scale)),
+        Math.min(1536, Math.floor(height * scale))
+      );
+      exportField.rebuild(elements, stones);
+    }
 
     this.render(
       ctx,
@@ -85,7 +115,8 @@ export class GardenRenderer {
       elements,
       null,
       stones,
-      null // No selection handles in export
+      null, // No selection handles in export
+      exportField
     );
 
     return offscreen.toDataURL('image/png');
@@ -93,5 +124,9 @@ export class GardenRenderer {
 
   public getStoneRenderer(): StoneRenderer {
     return this.stoneRenderer;
+  }
+
+  public getSandFieldRenderer(): SandFieldRenderer {
+    return this.sandFieldRenderer;
   }
 }

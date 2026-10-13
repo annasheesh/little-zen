@@ -194,7 +194,8 @@ export const App: React.FC = () => {
       gardenSettings.paletteId,
       engine.getElements(),
       engine.getStones(),
-      2
+      2,
+      engine.getHeightfield()
     );
     if (!dataUrl) return;
 

@@ -7,11 +7,13 @@ import {
   LinePattern,
   WavePattern,
   SpiralPattern,
+  SmoothStroke,
   GardenStone,
   Point,
   StoneType
 } from '../types/garden';
 import { GardenInputEvent, InputHandler, InputSource } from './input/types';
+import { SandHeightfield } from './simulation/SandHeightfield';
 
 export interface RakeEngineOptions {
   onStateChange?: () => void;
@@ -22,6 +24,10 @@ export class RakeEngine implements InputHandler {
   // Elements and stones
   private elements: GardenGrooveElement[] = [];
   private stones: GardenStone[] = [];
+
+  // Physical Sand Heightfield Simulation
+  private heightfield: SandHeightfield;
+  private previewHeightfield: SandHeightfield;
 
   // Active in-progress stroke/pattern preview
   private activeElement: GardenGrooveElement | null = null;
@@ -57,10 +63,28 @@ export class RakeEngine implements InputHandler {
   constructor(options?: RakeEngineOptions) {
     this.onStateChange = options?.onStateChange;
     this.onRakingActivity = options?.onRakingActivity;
+    this.heightfield = new SandHeightfield(1024, 768);
+    this.previewHeightfield = new SandHeightfield(1024, 768);
     this.saveHistory();
   }
 
-  // --- Configuration ---
+  // --- Configuration & Accessors ---
+
+  public setAspectRatio(aspect: number): void {
+    this.heightfield.setAspectRatio(aspect);
+    this.previewHeightfield.setAspectRatio(aspect);
+  }
+
+  public getHeightfield(): SandHeightfield {
+    if (
+      this.activeElement &&
+      this.activeElement.type !== 'freehand' &&
+      this.activeElement.type !== 'smooth'
+    ) {
+      return this.previewHeightfield;
+    }
+    return this.heightfield;
+  }
 
   public setTool(tool: ToolType) {
     this.currentTool = tool;
@@ -109,6 +133,8 @@ export class RakeEngine implements InputHandler {
     this.stones = JSON.parse(JSON.stringify(stones));
     this.activeElement = null;
     this.selectedStoneId = null;
+    this.heightfield.rebuild(this.elements, this.stones);
+    this.previewHeightfield.copyFrom(this.heightfield);
     this.saveHistory();
     this.notifyChange();
   }
@@ -148,6 +174,17 @@ export class RakeEngine implements InputHandler {
           grooveWidth: this.rakeConfig.grooveWidth,
           depth: this.rakeConfig.depth
         };
+
+        // Carve initial tine indent in heightfield
+        this.heightfield.carveRakeSegment(
+          this.startPoint,
+          { x: this.startPoint.x + 0.0001, y: this.startPoint.y },
+          prongOffsets,
+          this.rakeConfig.grooveWidth,
+          this.rakeConfig.depth,
+          this.stones
+        );
+        this.heightfield.applySettling(1, true);
         break;
       }
 
@@ -163,6 +200,8 @@ export class RakeEngine implements InputHandler {
           grooveWidth: this.rakeConfig.grooveWidth,
           depth: this.rakeConfig.depth
         };
+        this.previewHeightfield.copyFrom(this.heightfield);
+        this.previewHeightfield.carveCirclePattern(this.activeElement, this.stones);
         break;
       }
 
@@ -179,6 +218,8 @@ export class RakeEngine implements InputHandler {
           grooveWidth: this.rakeConfig.grooveWidth,
           depth: this.rakeConfig.depth
         };
+        this.previewHeightfield.copyFrom(this.heightfield);
+        this.previewHeightfield.carveLinePattern(this.activeElement, this.stones);
         break;
       }
 
@@ -197,6 +238,8 @@ export class RakeEngine implements InputHandler {
           grooveWidth: this.rakeConfig.grooveWidth,
           depth: this.rakeConfig.depth
         };
+        this.previewHeightfield.copyFrom(this.heightfield);
+        this.previewHeightfield.carveWavePattern(this.activeElement, this.stones);
         break;
       }
 
@@ -211,11 +254,20 @@ export class RakeEngine implements InputHandler {
           grooveWidth: this.rakeConfig.grooveWidth,
           depth: this.rakeConfig.depth
         };
+        this.previewHeightfield.copyFrom(this.heightfield);
+        this.previewHeightfield.carveSpiralPattern(this.activeElement, this.stones);
         break;
       }
 
       case 'smooth': {
-        this.eraseNearPoint(e.x, e.y, 0.04);
+        this.activeElement = {
+          id: `smooth-${Date.now()}`,
+          type: 'smooth',
+          points: [{ x: e.x, y: e.y, time: performance.now() }],
+          radius: 0.045
+        };
+        this.heightfield.smoothArea(e.x, e.y, 0.045, 0.55);
+        this.heightfield.applySettling(1, true);
         break;
       }
     }
@@ -241,8 +293,31 @@ export class RakeEngine implements InputHandler {
     switch (this.currentTool) {
       case 'rake': {
         if (this.activeElement && this.activeElement.type === 'freehand') {
-          // Distance filtering to prevent over-clustering points
           if (dist > 0.002) {
+            // Adaptive sub-stepping for fast movements ensures continuous sweeping without gaps
+            const maxSubStep = 0.008;
+            const subSteps = Math.min(6, Math.max(1, Math.ceil(dist / maxSubStep)));
+            for (let s = 1; s <= subSteps; s++) {
+              const t = s / subSteps;
+              const subPt = {
+                x: this.lastPoint.x + (e.x - this.lastPoint.x) * t,
+                y: this.lastPoint.y + (e.y - this.lastPoint.y) * t
+              };
+              const prevSubPt = {
+                x: this.lastPoint.x + (e.x - this.lastPoint.x) * ((s - 1) / subSteps),
+                y: this.lastPoint.y + (e.y - this.lastPoint.y) * ((s - 1) / subSteps)
+              };
+              this.heightfield.carveRakeSegment(
+                prevSubPt,
+                subPt,
+                this.activeElement.prongOffsets,
+                this.activeElement.grooveWidth,
+                this.activeElement.depth,
+                this.stones
+              );
+            }
+            this.heightfield.applySettling(1, true);
+
             this.activeElement.points.push({ x: e.x, y: e.y, time: performance.now() });
             this.lastPoint = { x: e.x, y: e.y };
             this.notifyChange();
@@ -255,6 +330,8 @@ export class RakeEngine implements InputHandler {
         if (this.activeElement && this.activeElement.type === 'circle') {
           const r = Math.hypot(e.x - this.startPoint.x, e.y - this.startPoint.y);
           this.activeElement.ringCount = Math.max(1, Math.min(8, Math.floor(r / 0.02)));
+          this.previewHeightfield.copyFrom(this.heightfield);
+          this.previewHeightfield.carveCirclePattern(this.activeElement, this.stones);
           this.notifyChange();
         }
         break;
@@ -264,6 +341,8 @@ export class RakeEngine implements InputHandler {
         if (this.activeElement && this.activeElement.type === 'line') {
           this.activeElement.endX = e.x;
           this.activeElement.endY = e.y;
+          this.previewHeightfield.copyFrom(this.heightfield);
+          this.previewHeightfield.carveLinePattern(this.activeElement, this.stones);
           this.notifyChange();
         }
         break;
@@ -273,6 +352,8 @@ export class RakeEngine implements InputHandler {
         if (this.activeElement && this.activeElement.type === 'wave') {
           this.activeElement.endX = e.x;
           this.activeElement.endY = e.y;
+          this.previewHeightfield.copyFrom(this.heightfield);
+          this.previewHeightfield.carveWavePattern(this.activeElement, this.stones);
           this.notifyChange();
         }
         break;
@@ -282,14 +363,23 @@ export class RakeEngine implements InputHandler {
         if (this.activeElement && this.activeElement.type === 'spiral') {
           const r = Math.hypot(e.x - this.startPoint.x, e.y - this.startPoint.y);
           this.activeElement.radius = Math.max(0.02, r);
+          this.previewHeightfield.copyFrom(this.heightfield);
+          this.previewHeightfield.carveSpiralPattern(this.activeElement, this.stones);
           this.notifyChange();
         }
         break;
       }
 
       case 'smooth': {
-        this.eraseNearPoint(e.x, e.y, 0.04);
-        this.notifyChange();
+        if (this.activeElement && this.activeElement.type === 'smooth') {
+          if (dist > 0.003) {
+            this.activeElement.points.push({ x: e.x, y: e.y, time: performance.now() });
+            this.heightfield.smoothArea(e.x, e.y, this.activeElement.radius, 0.55);
+            this.heightfield.applySettling(1, true);
+            this.lastPoint = { x: e.x, y: e.y };
+            this.notifyChange();
+          }
+        }
         break;
       }
     }
@@ -307,24 +397,61 @@ export class RakeEngine implements InputHandler {
     }
 
     if (this.activeElement) {
-      // Validate element length
       let valid = true;
+
       if (this.activeElement.type === 'freehand') {
         valid = this.activeElement.points.length >= 2;
-      } else if (this.activeElement.type === 'line' || this.activeElement.type === 'wave') {
+        if (valid) {
+          this.heightfield.applySettling(2, true);
+          this.elements.push(this.activeElement);
+          this.previewHeightfield.copyFrom(this.heightfield);
+          this.saveHistory();
+        }
+      } else if (this.activeElement.type === 'circle') {
+        valid = this.activeElement.ringCount >= 1;
+        if (valid) {
+          this.heightfield.copyFrom(this.previewHeightfield);
+          this.elements.push(this.activeElement);
+          this.saveHistory();
+        }
+      } else if (this.activeElement.type === 'line') {
         const d = Math.hypot(
           this.activeElement.endX - this.activeElement.startX,
           this.activeElement.endY - this.activeElement.startY
         );
         valid = d > 0.015;
+        if (valid) {
+          this.heightfield.copyFrom(this.previewHeightfield);
+          this.elements.push(this.activeElement);
+          this.saveHistory();
+        }
+      } else if (this.activeElement.type === 'wave') {
+        const d = Math.hypot(
+          this.activeElement.endX - this.activeElement.startX,
+          this.activeElement.endY - this.activeElement.startY
+        );
+        valid = d > 0.015;
+        if (valid) {
+          this.heightfield.copyFrom(this.previewHeightfield);
+          this.elements.push(this.activeElement);
+          this.saveHistory();
+        }
+      } else if (this.activeElement.type === 'spiral') {
+        valid = this.activeElement.radius > 0.015;
+        if (valid) {
+          this.heightfield.copyFrom(this.previewHeightfield);
+          this.elements.push(this.activeElement);
+          this.saveHistory();
+        }
+      } else if (this.activeElement.type === 'smooth') {
+        valid = this.activeElement.points.length >= 1;
+        if (valid) {
+          this.heightfield.applySettling(2, true);
+          this.elements.push(this.activeElement);
+          this.previewHeightfield.copyFrom(this.heightfield);
+          this.saveHistory();
+        }
       }
-
-      if (valid) {
-        this.elements.push(this.activeElement);
-        this.saveHistory();
-      }
-    } else if (this.currentTool === 'smooth') {
-      this.saveHistory();
     }
 
     this.resetStrokeState();
@@ -334,13 +461,22 @@ export class RakeEngine implements InputHandler {
   public onStrokeCancel(source: InputSource): void {
     if (this.activeSource === source) {
       this.onRakingActivity?.(false);
+
+      // Revert in-progress changes to heightfield
+      if (this.activeElement) {
+        this.heightfield.rebuild(this.elements, this.stones);
+        this.previewHeightfield.copyFrom(this.heightfield);
+      }
+
       // If stone was being dragged, revert to initial state
       if (this.initialStoneState && this.selectedStoneId) {
         const idx = this.stones.findIndex((s) => s.id === this.selectedStoneId);
         if (idx !== -1) {
           this.stones[idx] = { ...this.initialStoneState };
+          this.heightfield.rebuild(this.elements, this.stones);
         }
       }
+
       this.resetStrokeState();
       this.notifyChange();
     }
@@ -358,7 +494,6 @@ export class RakeEngine implements InputHandler {
   // --- Stone Interaction Logic ---
 
   private handleStoneStart(x: number, y: number) {
-    // Check if clicked an existing stone
     let clickedStone: GardenStone | null = null;
     for (let i = this.stones.length - 1; i >= 0; i--) {
       const s = this.stones[i];
@@ -398,6 +533,7 @@ export class RakeEngine implements InputHandler {
 
   private handleStoneEnd() {
     if (this.selectedStoneId && this.stoneDragMode === 'move') {
+      this.heightfield.rebuild(this.elements, this.stones);
       this.saveHistory();
     }
   }
@@ -419,6 +555,7 @@ export class RakeEngine implements InputHandler {
 
     this.stones.push(newStone);
     this.selectedStoneId = newStone.id;
+    this.heightfield.rebuild(this.elements, this.stones);
     this.saveHistory();
     this.notifyChange();
   }
@@ -427,6 +564,7 @@ export class RakeEngine implements InputHandler {
     if (!this.selectedStoneId) return;
     this.stones = this.stones.filter((s) => s.id !== this.selectedStoneId);
     this.selectedStoneId = null;
+    this.heightfield.rebuild(this.elements, this.stones);
     this.saveHistory();
     this.notifyChange();
   }
@@ -436,6 +574,7 @@ export class RakeEngine implements InputHandler {
     const s = this.stones.find((stone) => stone.id === this.selectedStoneId);
     if (s) {
       s.rotation += deltaAngle;
+      this.heightfield.rebuild(this.elements, this.stones);
       this.saveHistory();
       this.notifyChange();
     }
@@ -447,38 +586,16 @@ export class RakeEngine implements InputHandler {
     if (s) {
       s.radiusX = Math.max(0.015, Math.min(0.2, s.radiusX * scaleFactor));
       s.radiusY = Math.max(0.015, Math.min(0.2, s.radiusY * scaleFactor));
+      this.heightfield.rebuild(this.elements, this.stones);
       this.saveHistory();
       this.notifyChange();
     }
   }
 
-  // --- Smooth / Erasing Logic ---
-
-  private eraseNearPoint(x: number, y: number, radius = 0.04) {
-    // Locally erase freehand points near (x, y)
-    this.elements = this.elements.filter((el) => {
-      if (el.type === 'freehand') {
-        el.points = el.points.filter((pt) => Math.hypot(pt.x - x, pt.y - y) > radius);
-        return el.points.length >= 2;
-      }
-      if (el.type === 'circle') {
-        const d = Math.hypot(el.centerX - x, el.centerY - y);
-        return Math.abs(d - el.innerRadius) > radius;
-      }
-      if (el.type === 'line' || el.type === 'wave') {
-        const midX = (el.startX + el.endX) / 2;
-        const midY = (el.startY + el.endY) / 2;
-        return Math.hypot(midX - x, midY - y) > radius * 1.5;
-      }
-      if (el.type === 'spiral') {
-        return Math.hypot(el.centerX - x, el.centerY - y) > radius * 1.5;
-      }
-      return true;
-    });
-  }
-
   public clearGarden() {
     this.elements = [];
+    this.heightfield.reset();
+    this.heightfield.addStoneContactBerms(this.stones);
     this.saveHistory();
     this.notifyChange();
   }
@@ -518,6 +635,7 @@ export class RakeEngine implements InputHandler {
     this.elements = JSON.parse(JSON.stringify(prev.elements));
     this.stones = JSON.parse(JSON.stringify(prev.stones));
     this.selectedStoneId = null;
+    this.heightfield.rebuild(this.elements, this.stones);
     this.notifyChange();
     return true;
   }
@@ -531,6 +649,7 @@ export class RakeEngine implements InputHandler {
     this.elements = JSON.parse(JSON.stringify(next.elements));
     this.stones = JSON.parse(JSON.stringify(next.stones));
     this.selectedStoneId = null;
+    this.heightfield.rebuild(this.elements, this.stones);
     this.notifyChange();
     return true;
   }

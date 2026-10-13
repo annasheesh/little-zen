@@ -39,7 +39,8 @@ export const GardenCanvas: React.FC<GardenCanvasProps> = ({
       engine.getElements(),
       engine.getActiveElement(),
       engine.getStones(),
-      engine.getSelectedStoneId()
+      engine.getSelectedStoneId(),
+      engine.getHeightfield()
     );
   }, [engine, renderer, paletteId]);
 
@@ -61,8 +62,9 @@ export const GardenCanvas: React.FC<GardenCanvasProps> = ({
       canvas.style.height = `${height}px`;
     }
 
+    engine.setAspectRatio(width / height);
     draw();
-  }, [draw]);
+  }, [draw, engine]);
 
   useEffect(() => {
     handleResize();
